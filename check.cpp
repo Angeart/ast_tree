@@ -23,6 +23,9 @@
 #include <boost/preprocessor/seq/elem.hpp>
 #include <boost/preprocessor/facilities/empty.hpp>
 #include <boost/preprocessor/stringize.hpp>
+#include <boost/fusion/include/vector.hpp>
+#include <boost/fusion/include/at.hpp>
+#include <boost/fusion/include/for_each.hpp>
 
 namespace util {
     template<class... T>
@@ -141,6 +144,7 @@ std::string type2str() {
 
 struct dumper_t : boost::static_visitor<void> {
     dumper_t() : indent(0u) {};
+    dumper_t(uint32_t indent_) : indent(indent_) {};
     void set_indent(uint32_t indent_) { indent = indent_; }
     template<class target_t>
     auto operator()(const target_t& d) const -> std::enable_if_t<is_dumpable<target_t>(),void> {
@@ -185,29 +189,26 @@ struct sequence_holder_t {
 
 template<class ... elems_t>
 struct bundle_t {
-    using variant_t = boost::variant<unused_t,elems_t...>;
-    using elem_size_t = std::integral_constant<size_t, sizeof...(elems_t) + 1>;
-    using resolver_t = sequence_holder_t<unused_t,elems_t...>;
-    std::array<variant_t,elem_size_t::value> v;
+    using fusion_t = boost::fusion::vector<elems_t...>;
+    using elem_size_t = std::integral_constant<size_t, sizeof...(elems_t)>;
+    using resolver_t = sequence_holder_t<elems_t...>;
+    fusion_t v;
     template<class input_t>
     bundle_t(const input_t& in) {
-        v[resolver_t::template at_v<input_t>] = in;
+        boost::fusion::at_c<resolver_t::template at_v<input_t>>(this->v) = in;
     }
     bundle_t() {};
     virtual void dump(uint32_t indent = 0) const {
-        for(const auto& item : util::skip(v,1)){
-            dumper_t dumper;
-            dumper.set_indent(indent);
-            boost::apply_visitor(dumper, item);
-        }
+        dumper_t dumper{indent};
+        boost::fusion::for_each(this->v,dumper);
     }
-    template<class input_t>
+    template<class input_t, size_t index_v = resolver_t::template at_v<input_t>>
     void add(const input_t& in) {
-        v[resolver_t::template at_v<input_t>] = in;
+        boost::fusion::at_c<resolver_t::template at_v<input_t>>(this->v) = in;
     }
     template<class input_t>
     auto get() -> input_t {
-        return boost::get<input_t>(v.at(resolver_t::template at_v<input_t>));
+        return boost::fusion::at_c<resolver_t::template at_v<input_t>>(this->v);
     }
 };
 
