@@ -26,6 +26,8 @@
 #include <boost/fusion/include/vector.hpp>
 #include <boost/fusion/include/at.hpp>
 #include <boost/fusion/include/for_each.hpp>
+#include <boost/spirit/include/qi.hpp>
+#include <boost/spirit/include/phoenix.hpp>
 
 namespace util {
     template<class... T>
@@ -290,39 +292,128 @@ struct bundle_t {
 #define SAPPHIRE_AST_DEF_DEFAULT_CONSTRUCTOR(name) \
     name() {}
 
+#define SAPPHIRE_AST_DEF_RULES_INTERNAL_ROOT(name) \
+    template<class iterator_t, class skipper_t = boost::spirit::qi::unused_type> \
+    using root_t = boost::spirit::qi::rule<iterator_t, skipper_t, name()>;
+
+#define SAPPHIRE_AST_DEF_GRAMMAR(name) \
+struct grammar { \
+    template<class iterator_t, class skipper_t = boost::spirit::qi::unused_type> \
+    using base_t = boost::spirit::qi::grammar<iterator_t, skipper_t, name()>; \
+}; \
+
+#define SAPPHIRE_AST_DEF_RULES(name) \
+struct rules { \
+    SAPPHIRE_AST_DEF_RULES_INTERNAL_ROOT(name) \
+};
+
 #define SAPPHIRE_AST_DEF(name, ...) \
 struct name : util::class_identity<name,bundle_t<__VA_ARGS__>> { \
     SAPPHIRE_AST_DEF_DEFAULT_CONSTRUCTOR(name) \
     SAPPHIRE_AST_DEF_CONSTRUCTOR(name, __VA_ARGS__) \
     SAPPHIRE_AST_DEF_ASSIGN_OP(name, __VA_ARGS__) \
     SAPPHIRE_AST_DEF_CONVERTER(__VA_ARGS__) \
+    SAPPHIRE_AST_DEF_RULES(name) \
+    SAPPHIRE_AST_DEF_GRAMMAR(name) \
+};
+
+#define SAPPHIRE_AST_NORULE_DEF(name, ...) \
+struct name : util::class_identity<name,bundle_t<__VA_ARGS__>> { \
+    SAPPHIRE_AST_DEF_DEFAULT_CONSTRUCTOR(name) \
+    SAPPHIRE_AST_DEF_CONSTRUCTOR(name, __VA_ARGS__) \
+    SAPPHIRE_AST_DEF_ASSIGN_OP(name, __VA_ARGS__) \
+    SAPPHIRE_AST_DEF_CONVERTER(__VA_ARGS__) \
+    SAPPHIRE_AST_DEF_GRAMMAR(name) \
+};
+
+namespace ast {
+SAPPHIRE_AST_DEF(int32_value_t, int)
+SAPPHIRE_AST_DEF(float_value_t, float)
+SAPPHIRE_AST_DEF(test_t, int32_value_t, float_value_t)
+SAPPHIRE_AST_DEF(string_value_t, std::string)
+SAPPHIRE_AST_DEF(func_t, string_value_t, test_t)
 }
 
+namespace sapphire::core {
+namespace parser {
+template<class iterator>
+class skipper : public boost::spirit::qi::grammar<iterator> {
+public:
+    skipper() : skipper::base_type(root) {
+        namespace qi = boost::spirit::qi;
+        root = +(qi::blank | qi::eol);
+    }
+private:
+    boost::spirit::qi::rule<iterator> root;
+};
+}
+}
 
-SAPPHIRE_AST_DEF(int32_value_t, int);
-SAPPHIRE_AST_DEF(float_value_t, float);
-SAPPHIRE_AST_DEF(test_t, int32_value_t, float_value_t);
-SAPPHIRE_AST_DEF(string_value_t, std::string);
-SAPPHIRE_AST_DEF(func_t, string_value_t, test_t);
+namespace {
 
+namespace error {
+struct unable_parse {};
+}
+template<
+  template<class iterator, class skipper> class rule_t
+, class iterator_t = std::string::const_iterator
+, class skipper_t = sapphire::core::parser::skipper<iterator_t>
+, class result_t = typename rule_t<iterator_t, skipper_t>::start_type::attr_type
+>
+struct tester_t {
+    using result_type = result_t;
+    static result_t parse(const std::string& input) {
+        skipper_t skipper;
+        rule_t<iterator_t,skipper_t> rule;
+        result_t result;
+        auto it = input.begin();
+        const auto& end = input.end();
+        try {
+            if(!boost::spirit::qi::phrase_parse(it,end,rule,skipper,result) || it != end) {
+                throw error::unable_parse();
+            }
+        } catch(...) {
+            std::cout << "parse failed" << std::endl;
+            std::cout << std::string(it,end) << std::endl;
+            throw error::unable_parse();
+            return {};
+        }
+        return result;
+    }
+};
+}
+
+namespace parser {
+template<class iterator_t, class skipper_t>
+struct test_t : ast::test_t::grammar::base_t<iterator_t, skipper_t>
+{
+public:
+    test_t() : test_t::base_type(root) {
+
+    }
+private:
+    ast::test_t::rules::root_t<iterator_t, skipper_t> root;
+};
+
+}
 
 int main()
 {
     try {
-        test_t t;
-        t = float_value_t(10.0f);
-        t = int32_value_t(99);
-        func_t f;
-        f = string_value_t("hoge");
+        ast::test_t t;
+        t = ast::float_value_t(10.0f);
+        t = ast::int32_value_t(99);
+        ast::func_t f;
+        f = ast::string_value_t("hoge");
         f = t;
         f.dump();
     } catch(const std::exception& e) {
         std::cout << e.what() << std::endl;
     }
-    std::cout << func_t::resolver_t::template at_v<test_t> << std::endl;
+    std::cout << ast::func_t::resolver_t::template at_v<ast::test_t> << std::endl;
     std::cout <<
         boost::core::demangle(typeid(
-            func_t::resolver_t::at_t<1>::resolver_t::template at_t<1>
+            ast::func_t::resolver_t::at_t<1>::resolver_t::template at_t<1>
         ).name())
     << std::endl;
     return EXIT_SUCCESS;
